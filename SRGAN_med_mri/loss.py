@@ -2,40 +2,28 @@ import torch
 from torch import nn
 from torchvision.models.vgg import vgg16
 
-
 class GeneratorLoss(nn.Module):
     def __init__(self):
         super(GeneratorLoss, self).__init__()
-        # 加载预训练的 VGG16 模型
         vgg = vgg16(pretrained=True)
-        # 使用 VGG16 的前 31 层作为损失网络
         loss_network = nn.Sequential(*list(vgg.features)[:31]).eval()
-        # 冻结损失网络的参数
         for param in loss_network.parameters():
             param.requires_grad = False
         self.loss_network = loss_network
-        self.mse_loss = nn.MSELoss()  # 均方误差损失
-        self.tv_loss = TVLoss()  # 全变差损失
+        self.mse_loss = nn.MSELoss()
+        self.tv_loss = TVLoss()
 
-    def forward(self, out_labels, out_images, target_images):
-        # 将灰度图像复制为 3 通道
+    def forward(self, out_images, target_images):
         if out_images.size(1) == 1:
-            out_images = out_images.repeat(1, 3, 1, 1)  # 将 1 通道复制为 3 通道
+            out_images = out_images.repeat(1, 3, 1, 1)
         if target_images.size(1) == 1:
-            target_images = target_images.repeat(1, 3, 1, 1)  # 将 1 通道复制为 3 通道
+            target_images = target_images.repeat(1, 3, 1, 1)
 
-        # Adversarial Loss（对抗损失）
-        adversarial_loss = torch.mean(1 - out_labels)
-        # Perception Loss（感知损失）
         perception_loss = self.mse_loss(self.loss_network(out_images), self.loss_network(target_images))
-        # Image Loss（图像损失）
         image_loss = self.mse_loss(out_images, target_images)
-        # TV Loss（全变差损失）
         tv_loss = self.tv_loss(out_images)
 
-        # 总损失
-        return image_loss + 0.001 * adversarial_loss + 0.006 * perception_loss + 2e-8 * tv_loss
-
+        return image_loss + 0.006 * perception_loss + 2e-8 * tv_loss
 
 class TVLoss(nn.Module):
     def __init__(self, tv_loss_weight=1):
@@ -56,7 +44,19 @@ class TVLoss(nn.Module):
     def tensor_size(t):
         return t.size()[1] * t.size()[2] * t.size()[3]
 
-
-if __name__ == "__main__":
-    g_loss = GeneratorLoss()
-    print(g_loss)
+def compute_gradient_penalty(D, real_samples, fake_samples):
+    alpha = torch.randn(real_samples.size(0), 1, 1, 1).to(real_samples.device)
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = D(interpolates)
+    fake = torch.ones(d_interpolates.size()).to(real_samples.device)
+    gradients = torch.autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=fake,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty

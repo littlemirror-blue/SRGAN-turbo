@@ -11,20 +11,14 @@ from tqdm import tqdm
 
 import pytorch_ssim
 from data_utils import TrainDatasetFromFolder, ValDatasetFromFolder, display_transform
-from loss import GeneratorLoss
+from loss import GeneratorLoss, compute_gradient_penalty
 from model import Generator, Discriminator
 
-# 创建一个命令行参数解析器对象
 parser = argparse.ArgumentParser(description='Train Super Resolution Models')
-# 用于指定训练图像的裁剪尺寸，默认为88
-parser.add_argument('--crop_size', default=88, type=int, help='training images crop size')
-# 用于指定超分辨率的放大因子，修改默认为2
+parser.add_argument('--crop_size', default=96, type=int, help='training images crop size')
 parser.add_argument('--upscale_factor', default=2, type=int, choices=[2, 4, 8],
                     help='super resolution upscale factor')
-# 用于指定训练的轮数，默认为100
 parser.add_argument('--num_epochs', default=100, type=int, help='train epoch number')
-
-
 
 if __name__ == '__main__':
     opt = parser.parse_args()
@@ -50,8 +44,8 @@ if __name__ == '__main__':
         netD.cuda()
         generator_criterion.cuda()
     
-    optimizerG = optim.Adam(netG.parameters())
-    optimizerD = optim.Adam(netD.parameters())
+    optimizerG = optim.Adam(netG.parameters(), lr=1e-4)
+    optimizerD = optim.Adam(netD.parameters(), lr=1e-4)
     
     results = {'d_loss': [], 'g_loss': [], 'd_score': [], 'g_score': [], 'psnr': [], 'ssim': []}
     
@@ -62,43 +56,30 @@ if __name__ == '__main__':
         netG.train()
         netD.train()
         for data, target in train_bar:
-            g_update_first = True
             batch_size = data.size(0)
             running_results['batch_sizes'] += batch_size
 
-            ############################
-            # (1) Update G network: minimize 1-D(G(z)) + Perception Loss + Image Loss + TV Loss
-            ###########################
-            real_img = target
-            if torch.cuda.is_available():
-                real_img = real_img.float().cuda()
-            z = data
-            if torch.cuda.is_available():
-                z = z.float().cuda()
+            # Update D network
+            for _ in range(5):  # Train D more frequently
+                optimizerD.zero_grad()
+                real_img = target.float().cuda() if torch.cuda.is_available() else target.float()
+                z = data.float().cuda() if torch.cuda.is_available() else data.float()
+                fake_img = netG(z).detach()
+                real_out = netD(real_img).mean()
+                fake_out = netD(fake_img).mean()
+                gradient_penalty = compute_gradient_penalty(netD, real_img, fake_img)
+                d_loss = fake_out - real_out + 10 * gradient_penalty
+                d_loss.backward()
+                optimizerD.step()
+
+            # Update G network
+            optimizerG.zero_grad()
             fake_img = netG(z)
             fake_out = netD(fake_img).mean()
-
-            optimizerG.zero_grad()
-            g_loss = generator_criterion(fake_out, fake_img, real_img)
+            g_loss = generator_criterion(fake_img, real_img) - 1e-3 * fake_out
             g_loss.backward()
             optimizerG.step()
 
-            ############################
-            # (2) Update D network: maximize D(x)-1-D(G(z))
-            ###########################
-            real_out = netD(real_img).mean()
-            fake_out = netD(fake_img.detach()).mean()
-            d_loss = 1 - real_out + fake_out
-
-            optimizerD.zero_grad()
-            d_loss.backward()
-            
-            fake_img = netG(z)
-            fake_out = netD(fake_img).mean()
-
-            optimizerD.step()
-
-            # loss for current batch before optimization 
             running_results['g_loss'] += g_loss.item() * batch_size
             running_results['d_loss'] += d_loss.item() * batch_size
             running_results['d_score'] += real_out.item() * batch_size
@@ -122,11 +103,8 @@ if __name__ == '__main__':
             for val_lr, val_hr_restore, val_hr in val_bar:
                 batch_size = val_lr.size(0)
                 valing_results['batch_sizes'] += batch_size
-                lr = val_lr
-                hr = val_hr
-                if torch.cuda.is_available():
-                    lr = lr.float().cuda()
-                    hr = hr.float().cuda()
+                lr = val_lr.float().cuda() if torch.cuda.is_available() else val_lr.float()
+                hr = val_hr.float().cuda() if torch.cuda.is_available() else val_hr.float()
                 sr = netG(lr)
         
                 batch_mse = ((sr - hr) ** 2).data.mean()

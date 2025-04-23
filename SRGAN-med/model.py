@@ -2,15 +2,13 @@ import math
 import torch
 from torch import nn
 
-#####修改generator通道，以处理灰度图像
-
 class Generator(nn.Module):
     def __init__(self, scale_factor):
         upsample_block_num = int(math.log(scale_factor, 2))
 
         super(Generator, self).__init__()
         self.block1 = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=9, padding=4),  # 将 in_channels 从 3 改为 1
+            nn.Conv2d(1, 64, kernel_size=9, padding=4),
             nn.PReLU()
         )
         self.block2 = ResidualBlock(64)
@@ -23,7 +21,7 @@ class Generator(nn.Module):
             nn.BatchNorm2d(64)
         )
         block8 = [UpsampleBLock(64, 2) for _ in range(upsample_block_num)]
-        block8.append(nn.Conv2d(64, 1, kernel_size=9, padding=4))  # 输出通道也改为 1
+        block8.append(nn.Conv2d(64, 1, kernel_size=9, padding=4))
         self.block8 = nn.Sequential(*block8)
 
     def forward(self, x):
@@ -38,41 +36,32 @@ class Generator(nn.Module):
 
         return (torch.tanh(block8) + 1) / 2
 
-#####修改discriminator通道，以处理灰度图像
-
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=3, padding=1),  # 将 in_channels 从 3 改为 1
+            nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2),
 
             nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2),
 
             nn.AdaptiveAvgPool2d(1),
@@ -83,8 +72,7 @@ class Discriminator(nn.Module):
 
     def forward(self, x):
         batch_size = x.size(0)
-        return torch.sigmoid(self.net(x).view(batch_size))
-
+        return self.net(x).view(batch_size)
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
@@ -103,7 +91,6 @@ class ResidualBlock(nn.Module):
         residual = self.bn2(residual)
 
         return x + residual
-
 
 class UpsampleBLock(nn.Module):
     def __init__(self, in_channels, up_scale):
